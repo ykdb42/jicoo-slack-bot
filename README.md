@@ -1,47 +1,42 @@
 # Jicoo Slack Bot
 
-Jicoo の予約 Webhook を受け取り、Slack の Incoming Webhook に通知するだけの最小構成 Next.js (App Router) プロジェクトです。フロントエンド資産をすべて削ぎ落し、`app/api/jicoo/route.ts` に署名検証と Slack 通知ロジックを集約しています。
+Jicoo の予約 Webhook を受信して Slack の Incoming Webhook に通知する Next.js (App Router) プロジェクトです。フロント UI から Slack Webhook URL と Jicoo Signing Secret を入力すると、その値がサーバーのメモリに保持され、即座に API `/api/jicoo` の動作に反映されます。`.env` などへの保存は行いません。
 
 ## ディレクトリ構成（抜粋）
 ```
 jicoo-slack-bot/
 ├─ app/
-│  └─ api/
-│     └─ jicoo/
-│        └─ route.ts        # Webhook 受信 + Slack 通知
-├─ next.config.ts
+│  ├─ api/
+│  │  ├─ jicoo/route.ts    # Webhook受信 → 署名検証 → Slack通知
+│  │  └─ settings/route.ts # UI からの設定保存/取得エンドポイント
+│  ├─ layout.tsx           # 1ページ構成のUIラッパー
+│  └─ page.tsx             # Slack/Jicoo設定フォーム + Webhook URL コピーUI
+├─ lib/
+│  └─ runtime-config.ts    # ランタイム保持用の簡易ストア（プロセスメモリ）
 ├─ package.json
 ├─ tsconfig.json
 └─ README.md
 ```
 
-## 必要な環境変数
-`.env.local`（ローカル）および Vercel 上の Environment Variables に同じ値を設定してください。
+## 使い方（ローカル開発）
+1. 依存をインストールし開発サーバーを起動します。
+   ```bash
+   npm install
+   npm run dev
+   ```
+2. ブラウザで [http://localhost:3000](http://localhost:3000) を開き、トップページのフォームに `Slack Webhook URL` と `Jicoo Signing Secret` を入力して「設定を保存」を押します。入力値はサーバープロセスのメモリにだけ保持されるため、アプリ再起動や Vercel 再デプロイ後は再設定が必要です。
+3. 画面中央の「Jicoo Webhook URL」ブロックに現在のエンドポイント（例: `http://localhost:3000/api/jicoo`）が表示され、コピーボタンで値をクリップボードに転送できます。Jicoo 管理画面にはこの URL を登録してください。
+4. POST `http://localhost:3000/api/jicoo` に対して Jicoo からの Webhook と同じ形式のリクエストを送ると、保存済みの Slack Webhook URL へ通知が飛びます。署名検証が有効なので、curl テスト時は下記の例を利用してください。
 
-```env
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx/yyy/zzz
-JICOO_WEBHOOK_SECRET=your_jicoo_signing_secret
-```
+## 署名検証ロジック
+`app/api/jicoo/route.ts` では以下を行います。
+1. ヘッダー `Jicoo-Webhook-Signature` を `t=<timestamp>, v1=<signature>` としてパース。
+2. `timestamp` が現在時刻から ±5 分以内かを確認し、再送攻撃を防止。
+3. 検証対象文字列 `timestamp + "." + rawBody` を HMAC-SHA256（キー: Jicoo Signing Secret）でハッシュ化。
+4. 生成した署名と `v1` を `crypto.timingSafeEqual` で比較。失敗時は `401` を返却し Slack への通知は行いません。
 
-- `SLACK_WEBHOOK_URL`: Slack の Incoming Webhook URL（通知先チャンネルを指定して発行）
-- `JICOO_WEBHOOK_SECRET`: Jicoo Webhook 登録画面で表示される Signing Secret。HMAC-SHA256 の検証に利用します。
-
-## セットアップとローカル実行
-```bash
-npm install
-npm run dev
-```
-Webhook を localhost で受ける場合は、`curl` や ngrok などで `POST http://localhost:3000/api/jicoo` に対して署名付きリクエストを送ります。
-
-## 署名検証フロー
-1. Jicoo から届くヘッダー `Jicoo-Webhook-Signature` を `t=<timestamp>, v1=<signature>` 形式でパース。
-2. `timestamp` が ±5 分以内か確認してリプレイ攻撃を防止。
-3. `signedPayload = timestamp + "." + rawBody` を HMAC-SHA256(`JICOO_WEBHOOK_SECRET`) で計算。
-4. `v1` と `expectedSignature` を `crypto.timingSafeEqual` で比較し、失敗時は `401` を返却。
-
-## curl での動作確認例
-macOS/Linux などで openssl が使える場合の例です。Windows でも Git Bash で同様に実行できます。
-
+## curl によるローカル検証例
+README の値を UI で保存済みと仮定し、以下のコマンドで署名付きリクエストを送信できます（macOS/Linux 例）。
 ```bash
 export JICOO_WEBHOOK_SECRET=your_jicoo_signing_secret
 payload='{
@@ -58,7 +53,8 @@ payload='{
   }
 }'
 timestamp=$(date +%s)
-signature=$(printf "%s.%s" "$timestamp" "$payload" | openssl dgst -sha256 -hmac "$JICOO_WEBHOOK_SECRET" | cut -d" " -f2)
+signature=$(printf "%s.%s" "$timestamp" "$payload" | \
+  openssl dgst -sha256 -hmac "$JICOO_WEBHOOK_SECRET" | cut -d" " -f2)
 
 curl -X POST http://localhost:3000/api/jicoo \
   -H "Content-Type: application/json" \
@@ -66,25 +62,30 @@ curl -X POST http://localhost:3000/api/jicoo \
   -d "$payload"
 ```
 
-## Slack 側の事前準備
-1. Slack ワークスペースで「Incoming Webhooks」アプリを追加。
-2. 通知先チャンネルを選び、発行された Webhook URL を環境変数 `SLACK_WEBHOOK_URL` として保存。
-3. セキュリティのため Webhook URL は Git に含めず Vercel などの secrets で管理する。
+## UI で設定できる値
+- **Slack Webhook URL**: `https://hooks.slack.com/services/...` 形式。入力すると直ちに `/api/jicoo` がその URL へ通知を送信します。
+- **Jicoo Signing Secret**: Jicoo の Webhook 設定画面で発行される `whsec_xxx` のようなシークレット。署名検証に使用され、保存後は API レスポンス内ではマスクされた状態でのみ確認できます。
 
-## Jicoo 側の設定
-1. 管理画面で Webhook を有効化し、送信先 URL に `https://<your-vercel-app>.vercel.app/api/jicoo` を設定。
-2. Signing Secret（例: `whsec_xxx`）を控えて `JICOO_WEBHOOK_SECRET` に設定。
-3. guest_booked イベントが有効であることを確認。テスト送信があれば実行してレスポンス `{"ok":true}` を確認する。
+設定済みかどうかは、トップページの「現在の設定」カードで確認できます（Slack URL はマスク表示、Jicoo Secret は登録済み/未登録のみ）。
 
-## Vercel へのデプロイ
-1. GitHub 等に push し、Vercel で新規プロジェクトとして `jicoo-slack-bot` を import。
-2. `Settings > Environment Variables` に `SLACK_WEBHOOK_URL` と `JICOO_WEBHOOK_SECRET` を登録（Preview/Production で同じ値にする場合は `Add More` を使用）。
-3. `npm run build` が API だけの構成でも問題なく通ることを確認済み。追加のビルド設定は不要。
+## Slack 側の準備
+1. ワークスペースに「Incoming Webhooks」アプリを追加し、通知先チャンネルを選択。
+2. 発行された Webhook URL を UI のフォームに入力して保存します。
+3. URL は第三者に知られると悪用されるため、プロジェクトの README やリポジトリには記載しないでください。
 
-## エラーハンドリング / セキュリティ
-- 署名欠落、フォーマット不正、タイムスタンプのずれ、署名不一致はそれぞれ 4xx を返しログ出力。
-- Slack への POST が `2xx` 以外・fetch 失敗の場合は 502 を返却し Jicoo にリトライさせる。
-- `crypto.timingSafeEqual` で署名比較し、早期 return で情報を漏洩させないようにしています。
+## Jicoo 側の準備
+1. 管理画面の Webhook 設定で、UI が表示している `https://<ホスト名>/api/jicoo` を登録。
+2. Signing Secret を控え、同じく UI のフォームに入力して保存。
+3. テスト送信を実行し、レスポンス `{ "ok": true }` と Slack チャンネルへの通知を確認します。
 
-## 将来拡張について
-`app/api/jicoo/route.ts` の `payload.event` チェックを `switch` などに変えると、`guest_rescheduled` や `guest_cancelled` 専用の通知フォーマットを追加しやすくなります。Slack 送信前にイベント種別ごとのメッセージビルダーを呼び分ける構造を想定しています。
+## デプロイと運用の注意
+- Vercel などにデプロイすると UI/API はそのまま利用できますが、**設定値はプロセスメモリにのみ保持**されるため、再デプロイやサーバー再起動後はフォームから再設定が必要です。長期運用する場合は KV ストアや Secrets Manager など永続ストレージへの拡張を検討してください。
+- `npm run build` で静的アセットがほとんど無い構成でもビルド可能です。`/api/jicoo` は `runtime='nodejs'` を宣言しているため、Vercel の Node.js ランタイム上で動作します。
+
+## セキュリティとエラーハンドリング
+- 署名ヘッダー欠落・フォーマット不正・タイムスタンプずれ・HMAC 不一致はすべて 4xx 応答にし、Jicoo からのリトライ対象になります。
+- Slack Webhook への POST が失敗した場合は 502 を返して Jicoo 側での再送を促します。
+- UI からの設定は JSON API で受け取り、URL 形式や空文字をサーバー側で必ず検証しています。
+
+## 将来拡張のヒント
+`app/api/jicoo/route.ts` の `payload.event` 判定を `switch` へ置き換えれば、`guest_rescheduled` や `guest_cancelled` といった追加イベントのメッセージフォーマットを簡単に差し込めます。Slack へ送る Block Kit をイベントごとに分けたい場合は、`buildSlackPayload` をイベント名を引数にとる関数へ拡張するのが良いでしょう。
