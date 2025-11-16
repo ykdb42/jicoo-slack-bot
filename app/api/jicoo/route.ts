@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'node:crypto';
+import { getRuntimeConfig } from '@/lib/runtime-config';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,11 +45,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing signature header' }, { status: 400 });
   }
 
-  const webhookSecret = process.env.JICOO_WEBHOOK_SECRET;
-  const slackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
+  const { jicooSecret: webhookSecret, slackWebhookUrl } = getRuntimeConfig();
   if (!webhookSecret || !slackWebhookUrl) {
-    console.error('Missing required environment variables');
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+    console.error('Runtime config missing. Configure via UI before sending events.');
+    return NextResponse.json(
+      { error: 'Runtime config missing. Please configure from the dashboard UI.' },
+      { status: 503 },
+    );
   }
 
   const parsedSignature = parseSignature(signatureHeader);
