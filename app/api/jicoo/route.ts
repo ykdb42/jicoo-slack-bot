@@ -9,6 +9,34 @@ const SIGNATURE_HEADER = 'Jicoo-Webhook-Signature';
 const SIGNATURE_TOLERANCE_SECONDS = 60 * 5;
 const FALLBACK_TEXT = '不明';
 const JST_TIMEZONE = 'Asia/Tokyo';
+const PHONE_QUESTION_PATTERN = /(電話|phone|tel)/i;
+const GOOGLE_MEET_QUESTION_PATTERN = /(google\s*meet|meet\s*url|google\s*hangout|オンライン.*URL|URL.*Google)/i;
+
+type JicooAnswerContent = string | string[] | null | undefined;
+
+type JicooContact = {
+  name?: string;
+  email?: string;
+  phone?: string;
+  timezone?: string;
+};
+
+type JicooAnswer = {
+  question?: string;
+  content?: JicooAnswerContent;
+  value?: JicooAnswerContent;
+};
+
+type JicooMeetingLocation = {
+  url?: string | null;
+  link?: string | null;
+  value?: string | null;
+};
+
+type JicooMeeting = {
+  url?: string | null;
+  link?: string | null;
+};
 
 type JicooEventPayload = {
   event: string;
@@ -18,13 +46,18 @@ type JicooEventPayload = {
     endedAt?: string;
     eventTypeName?: string;
     eventTypeId?: string;
+    contact?: JicooContact | null;
+    answers?: JicooAnswer[] | null;
+    googleMeetUrl?: string;
+    hangoutLink?: string;
+    hangoutUrl?: string;
+    meetingUrl?: string;
+    conferenceUrl?: string;
+    meeting?: JicooMeeting | null;
+    location?: JicooMeetingLocation | null;
   } | null;
-  contact?: {
-    name?: string;
-    email?: string;
-    phone?: string;
-    timezone?: string;
-  } | null;
+  contact?: JicooContact | null;
+  answers?: JicooAnswer[] | null;
 };
 
 type SignatureParts = {
@@ -145,23 +178,21 @@ function verifySignature({ timestamp, signature }: SignatureParts, rawBody: stri
 }
 
 function buildSlackPayload(payload: JicooEventPayload): SlackPayload {
-  const contactName = payload.contact?.name ?? FALLBACK_TEXT;
-  const contactEmail = payload.contact?.email ?? FALLBACK_TEXT;
-  const start = payload.object?.startedAt ?? FALLBACK_TEXT;
-  const end = payload.object?.endedAt ?? FALLBACK_TEXT;
-  const eventName = payload.object?.eventTypeName ?? FALLBACK_TEXT;
-
-  const startText = toJstString(start);
-  const endText = toJstString(end);
-  const heading = '📅 新規予約が入りました';
+  const answers = collectAnswers(payload);
+  const { name, email, phone } = getContactInfo(payload, answers);
+  const startText = toJstString(payload.object?.startedAt);
+  const endText = toJstString(payload.object?.endedAt);
+  const googleMeetUrl = extractGoogleMeetUrl(payload, answers);
+  const heading = '新しい予約を受信しました';
 
   const text =
     `${heading}\n` +
-    `・名前: ${contactName}\n` +
-    `・メール: ${contactEmail}\n` +
-    `・開始: ${startText}\n` +
-    `・終了: ${endText}\n` +
-    `・イベント: ${eventName}`;
+    `・名前: ${name}\n` +
+    `・メール: ${email}\n` +
+    `・電話番号: ${phone}\n` +
+    `・開始時刻: ${startText}\n` +
+    `・終了時刻: ${endText}\n` +
+    `・Google Meet: ${googleMeetUrl}`;
 
   const blocks = [
     {
@@ -176,23 +207,27 @@ function buildSlackPayload(payload: JicooEventPayload): SlackPayload {
       fields: [
         {
           type: 'mrkdwn',
-          text: `*名前*\n${contactName}`,
+          text: `*名前*\n${name}`,
         },
         {
           type: 'mrkdwn',
-          text: `*メール*\n${contactEmail}`,
+          text: `*メール*\n${email}`,
         },
         {
           type: 'mrkdwn',
-          text: `*開始*\n${startText}`,
+          text: `*電話番号*\n${phone}`,
         },
         {
           type: 'mrkdwn',
-          text: `*終了*\n${endText}`,
+          text: `*開始時刻*\n${startText}`,
         },
         {
           type: 'mrkdwn',
-          text: `*イベント*\n${eventName}`,
+          text: `*終了時刻*\n${endText}`,
+        },
+        {
+          type: 'mrkdwn',
+          text: `*Google Meet*\n${googleMeetUrl}`,
         },
       ],
     },
@@ -228,7 +263,7 @@ async function sendSlackNotification(webhookUrl: string, payload: SlackPayload) 
 }
 
 function toJstString(dateTime?: string): string {
-  if (!dateTime || dateTime === FALLBACK_TEXT) {
+  if (!dateTime) {
     return FALLBACK_TEXT;
   }
 
@@ -246,5 +281,100 @@ function toJstString(dateTime?: string): string {
   } catch (error) {
     console.warn('Failed to format date', error);
     return dateTime;
+  }
+}
+
+function collectAnswers(payload: JicooEventPayload): JicooAnswer[] {
+  const result: JicooAnswer[] = [];
+  const bookingAnswers = payload.object?.answers;
+  if (Array.isArray(bookingAnswers)) {
+    result.push(...bookingAnswers);
+  }
+  const rootAnswers = payload.answers;
+  if (Array.isArray(rootAnswers)) {
+    result.push(...rootAnswers);
+  }
+  return result;
+}
+
+function getContactInfo(payload: JicooEventPayload, answers: JicooAnswer[]) {
+  const contact = payload.object?.contact ?? payload.contact;
+  const name = normalizeText(contact?.name) ?? FALLBACK_TEXT;
+  const email = normalizeText(contact?.email) ?? FALLBACK_TEXT;
+  const phone =
+    normalizeText(contact?.phone) ?? findAnswerValue(answers, PHONE_QUESTION_PATTERN) ?? FALLBACK_TEXT;
+
+  return { name, email, phone };
+}
+
+function extractGoogleMeetUrl(payload: JicooEventPayload, answers: JicooAnswer[]): string {
+  const candidates = [
+    payload.object?.googleMeetUrl,
+    payload.object?.hangoutLink,
+    payload.object?.hangoutUrl,
+    payload.object?.conferenceUrl,
+    payload.object?.meetingUrl,
+    payload.object?.meeting?.url,
+    payload.object?.meeting?.link,
+    payload.object?.location?.url,
+    payload.object?.location?.link,
+    payload.object?.location?.value,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeText(candidate);
+    if (normalized && looksLikeUrl(normalized)) {
+      return normalized;
+    }
+  }
+
+  const answerUrl = findAnswerValue(answers, GOOGLE_MEET_QUESTION_PATTERN);
+  if (answerUrl && looksLikeUrl(answerUrl)) {
+    return answerUrl;
+  }
+
+  return FALLBACK_TEXT;
+}
+
+function findAnswerValue(answers: JicooAnswer[], pattern: RegExp): string | undefined {
+  for (const answer of answers) {
+    if (!answer.question || !pattern.test(answer.question)) {
+      continue;
+    }
+    const normalized = normalizeAnswerValue(answer.content ?? answer.value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
+function normalizeAnswerValue(value: JicooAnswerContent): string | undefined {
+  if (Array.isArray(value)) {
+    const normalized = value
+      .map((item) => (typeof item === 'string' ? item.trim() : ''))
+      .filter((item) => item.length > 0);
+    if (normalized.length === 0) {
+      return undefined;
+    }
+    return normalized.join(', ');
+  }
+  return normalizeText(value);
+}
+
+function normalizeText(value?: string | null): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function looksLikeUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
   }
 }
