@@ -7,7 +7,7 @@ type SettingsBody = {
 };
 
 export async function GET() {
-  const config = getRuntimeConfig();
+  const config = await getRuntimeConfig();
 
   return NextResponse.json({
     slackWebhookUrl: maskUrl(config.slackWebhookUrl),
@@ -32,16 +32,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid Slack webhook URL' }, { status: 400 });
   }
 
-  setRuntimeConfig({
-    slackWebhookUrl: slackWebhookUrl ?? null,
-    jicooSecret: jicooSecret ?? null,
+  const updated = await setRuntimeConfig({
+    ...(slackWebhookUrl !== undefined ? { slackWebhookUrl } : {}),
+    ...(jicooSecret !== undefined ? { jicooSecret } : {}),
   });
 
   return NextResponse.json({
     ok: true,
-    slackWebhookUrl: maskUrl(slackWebhookUrl ?? null),
-    hasSlackWebhookUrl: Boolean(slackWebhookUrl),
-    hasJicooSecret: Boolean(jicooSecret),
+    slackWebhookUrl: maskUrl(updated.slackWebhookUrl),
+    hasSlackWebhookUrl: Boolean(updated.slackWebhookUrl),
+    hasJicooSecret: Boolean(updated.jicooSecret),
   });
 }
 

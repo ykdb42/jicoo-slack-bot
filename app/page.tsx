@@ -104,8 +104,8 @@ export default function HomePage() {
       <h1 style={{ margin: 0, fontSize: '1.75rem' }}>Jicoo Slack Bot</h1>
       <p style={{ maxWidth: 560, lineHeight: 1.6 }}>
         このアプリは Jicoo Webhook を受け取り、署名検証後に Slack へ通知するための API だけで構成されたミニマム実装です。
-        下記フォームで Slack Webhook URL と Jicoo Signing Secret を入力すると、その値で Bot が即時に動作します
-        （値はサーバーメモリに保存されるだけなので、再起動時は再設定が必要です）。
+        下記フォームで Slack Webhook URL と Jicoo Signing Secret を入力すると、その値で Bot が即時に動作し、
+        サーバー内の `.runtime/settings.json` に安全に保存されるため、再起動後も同じ設定が使われます。
       </p>
       <code
         style={{
@@ -261,7 +261,7 @@ export default function HomePage() {
           <p style={{ margin: 0, fontSize: '0.95rem', color: statusColor }}>
             {message}
             <br />
-            <small>※ 値はサーバーメモリに保持されるため、再デプロイ時などは再設定が必要です。</small>
+            <small>※ 値は `.runtime/settings.json` に保存されるため、再設定は値を変更したいタイミングだけでOKです。</small>
           </p>
         )}
       </section>

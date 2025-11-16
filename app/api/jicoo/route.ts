@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing signature header' }, { status: 400 });
   }
 
-  const { jicooSecret: webhookSecret, slackWebhookUrl } = getRuntimeConfig();
+  const { jicooSecret: webhookSecret, slackWebhookUrl } = await getRuntimeConfig();
   if (!webhookSecret || !slackWebhookUrl) {
     console.error('Runtime config missing. Configure via UI before sending events.');
     return NextResponse.json(

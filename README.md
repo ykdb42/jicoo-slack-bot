@@ -1,6 +1,6 @@
 # Jicoo Slack Bot
 
-Jicoo の予約 Webhook を受信して Slack の Incoming Webhook に通知する Next.js (App Router) プロジェクトです。フロント UI から Slack Webhook URL と Jicoo Signing Secret を入力すると、その値がサーバーのメモリに保持され、即座に API `/api/jicoo` の動作に反映されます。`.env` などへの保存は行いません。
+Jicoo の予約 Webhook を受信して Slack の Incoming Webhook に通知する Next.js (App Router) プロジェクトです。フロント UI から Slack Webhook URL と Jicoo Signing Secret を入力すると、その値が `.runtime/settings.json` に保持され、即座に API `/api/jicoo` の動作に反映されます（`.env` などへの書き込みは行いません。読み取り専用環境では自動的にメモリ保持へフォールバックします）。
 
 ## ディレクトリ構成（抜粋）
 ```
@@ -12,7 +12,7 @@ jicoo-slack-bot/
 │  ├─ layout.tsx           # 1ページ構成のUIラッパー
 │  └─ page.tsx             # Slack/Jicoo設定フォーム + Webhook URL コピーUI
 ├─ lib/
-│  └─ runtime-config.ts    # ランタイム保持用の簡易ストア（プロセスメモリ）
+│  └─ runtime-config.ts    # ランタイム保持用の簡易ストア（`.runtime/settings.json` へ永続化）
 ├─ package.json
 ├─ tsconfig.json
 └─ README.md
@@ -24,7 +24,7 @@ jicoo-slack-bot/
    npm install
    npm run dev
    ```
-2. ブラウザで [http://localhost:3000](http://localhost:3000) を開き、トップページのフォームに `Slack Webhook URL` と `Jicoo Signing Secret` を入力して「設定を保存」を押します。入力値はサーバープロセスのメモリにだけ保持されるため、アプリ再起動や Vercel 再デプロイ後は再設定が必要です。
+2. ブラウザで [http://localhost:3000](http://localhost:3000) を開き、トップページのフォームに `Slack Webhook URL` と `Jicoo Signing Secret` を入力して「設定を保存」を押します。入力値は `.runtime/settings.json` に保存されるため、アプリを再起動しても同じ設定で動作し続けます（ファイルを削除した場合のみ再設定が必要）。
 3. 画面中央の「Jicoo Webhook URL」ブロックに現在のエンドポイント（例: `http://localhost:3000/api/jicoo`）が表示され、コピーボタンで値をクリップボードに転送できます。Jicoo 管理画面にはこの URL を登録してください。
 4. POST `http://localhost:3000/api/jicoo` に対して Jicoo からの Webhook と同じ形式のリクエストを送ると、保存済みの Slack Webhook URL へ通知が飛びます。署名検証が有効なので、curl テスト時は下記の例を利用してください。
 
@@ -79,7 +79,7 @@ curl -X POST http://localhost:3000/api/jicoo \
 3. テスト送信を実行し、レスポンス `{ "ok": true }` と Slack チャンネルへの通知を確認します。
 
 ## デプロイと運用の注意
-- Vercel などにデプロイすると UI/API はそのまま利用できますが、**設定値はプロセスメモリにのみ保持**されるため、再デプロイやサーバー再起動後はフォームから再設定が必要です。長期運用する場合は KV ストアや Secrets Manager など永続ストレージへの拡張を検討してください。
+- Vercel などにデプロイすると UI/API はそのまま利用できますが、読み取り専用ファイルシステムのため `.runtime/settings.json` への保存は失敗し、メモリ保持（プロセス終了時に消える）にフォールバックします。長期運用で完全な永続化が必要な場合は KV ストアや Secrets Manager など外部ストレージを併用してください。
 - `npm run build` で静的アセットがほとんど無い構成でもビルド可能です。`/api/jicoo` は `runtime='nodejs'` を宣言しているため、Vercel の Node.js ランタイム上で動作します。
 
 ## セキュリティとエラーハンドリング
