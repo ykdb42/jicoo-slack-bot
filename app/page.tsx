@@ -1,280 +1,280 @@
-'use client';
+import type { CSSProperties } from 'react';
+import { headers } from 'next/headers';
+import { getEnvStatus } from '@/lib/env';
 
-import { FormEvent, useEffect, useState } from 'react';
+const FALLBACK_ENDPOINT = 'https://{your-domain}/api/jicoo';
 
-type SettingsResponse = {
-  slackWebhookUrl: string | null;
-  hasSlackWebhookUrl: boolean;
-  hasJicooSecret: boolean;
-};
+export default async function HomePage() {
+  const status = getEnvStatus();
+  const endpointUrl = await resolveEndpointUrl();
+  const displayEndpoint = endpointUrl ?? FALLBACK_ENDPOINT;
+  const canCopyEndpoint = Boolean(endpointUrl);
 
-export default function HomePage() {
-  const [slackWebhookUrl, setSlackWebhookUrl] = useState('');
-  const [jicooSecret, setJicooSecret] = useState('');
-  const [message, setMessage] = useState('');
-  const [messageType, setMessageType] = useState<'info' | 'success' | 'error'>('info');
-  const [status, setStatus] = useState<SettingsResponse | null>(null);
-  const [loadingStatus, setLoadingStatus] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [endpointUrl, setEndpointUrl] = useState('');
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        const response = await fetch('/api/settings');
-        if (!response.ok) {
-          throw new Error('設定情報の取得に失敗しました');
-        }
-        const data = (await response.json()) as SettingsResponse;
-        setStatus(data);
-      } catch (error) {
-        setMessage(error instanceof Error ? error.message : '設定情報の取得に失敗しました');
-        setMessageType('error');
-      } finally {
-        setLoadingStatus(false);
-      }
-    };
-    void fetchStatus();
-  }, []);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setEndpointUrl(`${window.location.origin}/api/jicoo`);
-    }
-  }, []);
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setSubmitting(true);
-    setMessage('設定を保存しています…');
-    setMessageType('info');
-
-    try {
-      const response = await fetch('/api/settings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          slackWebhookUrl,
-          jicooSecret,
-        }),
-      });
-
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error ?? '設定の保存に失敗しました');
-      }
-
-      setStatus({
-        slackWebhookUrl: result.slackWebhookUrl ?? null,
-        hasSlackWebhookUrl: Boolean(result.hasSlackWebhookUrl),
-        hasJicooSecret: Boolean(result.hasJicooSecret),
-      });
-      setSlackWebhookUrl('');
-      setJicooSecret('');
-      setMessage('設定を保存しました。以降の Webhook はこの値で処理されます。');
-      setMessageType('success');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : '設定の保存に失敗しました');
-      setMessageType('error');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const statusColor =
-    messageType === 'error' ? '#f87171' : messageType === 'success' ? '#4ade80' : '#93c5fd';
+  const statusItems = [
+    { label: 'Slack Webhook URL', env: 'SLACK_WEBHOOK_URL', configured: status.hasSlackWebhookUrl },
+    { label: 'Jicoo Signing Secret', env: 'JICOO_SIGNING_SECRET', configured: status.hasJicooSecret },
+  ];
 
   return (
-    <main
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '1.5rem',
-        minHeight: '100vh',
-        textAlign: 'center',
-        padding: '2rem',
-      }}
-    >
+    <main style={mainStyle}>
       <span style={{ fontSize: '3rem' }}>⚡</span>
       <h1 style={{ margin: 0, fontSize: '1.75rem' }}>Jicoo Slack Bot</h1>
-      <p style={{ maxWidth: 560, lineHeight: 1.6 }}>
-        このアプリは Jicoo Webhook を受け取り、署名検証後に Slack へ通知するための API だけで構成されたミニマム実装です。
-        下記フォームで Slack Webhook URL と Jicoo Signing Secret を入力すると、その値で Bot が即時に動作し、
-        サーバー内の `.runtime/settings.json` に安全に保存されるため、再起動後も同じ設定が使われます。
+      <p style={leadCopyStyle}>
+        Jicoo の Webhook を検証して Slack Incoming Webhook へ転送する Next.js (App Router) アプリです。設定値は
+        `.env` に定義した環境変数からのみ読み取り、UI では Secrets を扱いません。
       </p>
-      <code
-        style={{
-          padding: '0.75rem 1rem',
-          borderRadius: '0.75rem',
-          backgroundColor: '#1e293b',
-          fontSize: '0.95rem',
-        }}
-      >
-        POST /api/jicoo
-      </code>
+      <code style={codeStyle}>POST /api/jicoo</code>
 
-      <section
-        style={{
-          width: '100%',
-          maxWidth: 540,
-          backgroundColor: '#1e293b',
-          padding: '1.5rem',
-          borderRadius: '1rem',
-          textAlign: 'left',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '1.5rem',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.4rem',
-            fontSize: '0.95rem',
-            backgroundColor: '#0f172a',
-            padding: '0.75rem 1rem',
-            borderRadius: '0.75rem',
-          }}
-        >
-          <strong style={{ fontSize: '1rem' }}>現在の設定</strong>
-          {loadingStatus ? (
-            <span>読み込み中…</span>
-          ) : (
-            <>
-              <span>Slack Webhook: {status?.slackWebhookUrl ?? '未設定'}</span>
-              <span>Jicoo Secret: {status?.hasJicooSecret ? '登録済み' : '未登録'}</span>
-            </>
-          )}
-        </div>
-
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.5rem',
-            fontSize: '0.95rem',
-            backgroundColor: '#0f172a',
-            padding: '0.75rem 1rem',
-            borderRadius: '0.75rem',
-          }}
-        >
-          <strong style={{ fontSize: '1rem' }}>Jicoo Webhook URL</strong>
-          <p style={{ margin: 0, color: '#cbd5f5', lineHeight: 1.4 }}>
-            Jicoo 管理画面の Webhook 設定には以下の URL を登録してください。
+      <section style={sectionStyle}>
+        <article style={cardStyle}>
+          <h2 style={cardTitleStyle}>環境変数のセットアップ</h2>
+          <p style={paragraphStyle}>
+            プロジェクト直下に `.env` を配置し、Slack / Jicoo の認証情報を入力してください。Vercel などにデプロイする場合も同じキーで
+            Secrets を登録するだけです。
           </p>
-          <div
-            style={{
-              display: 'flex',
-              gap: '0.5rem',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-            }}
-          >
-            <code
-              style={{
-                flex: '1 1 auto',
-                minWidth: 0,
-                overflowX: 'auto',
-                padding: '0.5rem 0.75rem',
-                borderRadius: '0.5rem',
-                backgroundColor: '#1e293b',
-              }}
-            >
-              {endpointUrl || 'https://{your-domain}/api/jicoo'}
-            </code>
+          <pre style={preStyle}>
+            SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx/yyy/zzz
+            {'\n'}
+            JICOO_SIGNING_SECRET=whsec_xxxxxxxxxxxxxxxxxxx
+          </pre>
+          <p style={hintStyle}>`.env` を更新したら `npm run dev` を再起動することで新しい値が反映されます。</p>
+        </article>
+
+        <article style={cardStyle}>
+          <h2 style={cardTitleStyle}>現在の状態</h2>
+          <ul style={statusListStyle}>
+            {statusItems.map((item) => (
+              <li key={item.env} style={statusItemStyle}>
+                <div style={statusHeaderStyle}>
+                  <span>{item.label}</span>
+                  <span style={pillStyle(item.configured)}>{item.configured ? '設定済み' : '未設定'}</span>
+                </div>
+                <small style={envNameStyle}>{item.env}</small>
+              </li>
+            ))}
+          </ul>
+          <p style={paragraphStyle}>どちらかが未設定の場合、/api/jicoo は 503 を返し Jicoo からの連携を停止します。</p>
+        </article>
+
+        <article style={cardStyle}>
+          <h2 style={cardTitleStyle}>Jicoo Webhook URL</h2>
+          <p style={paragraphStyle}>Jicoo 管理画面の Webhook 設定に以下のエンドポイントを登録してください。</p>
+          <div style={endpointRowStyle}>
+            <code style={endpointCodeStyle}>{displayEndpoint}</code>
             <button
               type="button"
-              onClick={async () => {
-                if (!endpointUrl) return;
-                try {
-                  await navigator.clipboard.writeText(endpointUrl);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
-                } catch {
-                  setMessage('クリップボードへのコピーに失敗しました');
-                  setMessageType('error');
-                }
-              }}
-              style={{
-                border: '1px solid #38bdf8',
-                background: '#0f172a',
-                color: '#38bdf8',
-                borderRadius: '999px',
-                padding: '0.4rem 0.9rem',
-                cursor: endpointUrl ? 'pointer' : 'not-allowed',
-              }}
+              id="copy-endpoint-btn"
+              data-endpoint={endpointUrl ?? ''}
+              style={copyButtonStyle(canCopyEndpoint)}
+              disabled={!canCopyEndpoint}
             >
-              {copied ? 'コピーしました！' : 'コピー'}
+              {canCopyEndpoint ? 'コピー' : 'URL待ち'}
             </button>
           </div>
-        </div>
-
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.95rem' }}>
-            Slack Webhook URL
-            <input
-              type="url"
-              value={slackWebhookUrl}
-              onChange={(e) => setSlackWebhookUrl(e.target.value)}
-              placeholder="https://hooks.slack.com/services/..."
-              style={inputStyle}
+          {!canCopyEndpoint ? (
+            <p style={hintStyle}>Host / X-Forwarded-Proto ヘッダーが無い環境ではコピー機能を無効化しています。</p>
+          ) : (
+            <script
+              dangerouslySetInnerHTML={{ __html: buildCopyButtonScript(endpointUrl ?? '') }}
+              suppressHydrationWarning
             />
-          </label>
+          )}
+        </article>
 
-          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.95rem' }}>
-            Jicoo Signing Secret
-            <input
-              type="text"
-              value={jicooSecret}
-              onChange={(e) => setJicooSecret(e.target.value)}
-              placeholder="whsec_xxxxxxxxx"
-              style={inputStyle}
-            />
-          </label>
-
-          <button
-            type="submit"
-            disabled={submitting}
-            style={{
-              marginTop: '0.5rem',
-              border: 'none',
-              borderRadius: '999px',
-              padding: '0.75rem 1rem',
-              background: submitting ? '#94a3b8' : '#38bdf8',
-              color: '#0f172a',
-              fontWeight: 600,
-              cursor: submitting ? 'not-allowed' : 'pointer',
-              transition: 'background 0.2s ease',
-            }}
-          >
-            {submitting ? '保存中…' : '設定を保存'}
-          </button>
-        </form>
-
-        {message && (
-          <p style={{ margin: 0, fontSize: '0.95rem', color: statusColor }}>
-            {message}
-            <br />
-            <small>※ 値は `.runtime/settings.json` に保存されるため、再設定は値を変更したいタイミングだけでOKです。</small>
+        <article style={cardStyle}>
+          <h2 style={cardTitleStyle}>テストのヒント</h2>
+          <p style={paragraphStyle}>
+            README に掲載している curl サンプルを使うと署名検証付きでローカルテストが可能です。Slack 側で 5xx が返ると
+            Jicoo から再送が行われます。
           </p>
-        )}
+        </article>
       </section>
     </main>
   );
 }
 
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  borderRadius: '0.5rem',
-  border: '1px solid #334155',
-  backgroundColor: '#0f172a',
-  color: '#e2e8f0',
-  padding: '0.75rem',
+async function resolveEndpointUrl(): Promise<string | null> {
+  const headerList = await headers();
+  const host = headerList.get('x-forwarded-host') ?? headerList.get('host');
+  if (!host) {
+    return null;
+  }
+  const rawProtocol = headerList.get('x-forwarded-proto') ?? 'http';
+  const protocol = rawProtocol.split(',')[0]?.trim() === 'https' ? 'https' : 'http';
+  return `${protocol}://${host}/api/jicoo`;
+}
+
+const mainStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '1.5rem',
+  minHeight: '100vh',
+  textAlign: 'center',
+  padding: '2rem',
+};
+
+const leadCopyStyle: CSSProperties = {
+  maxWidth: 600,
+  lineHeight: 1.6,
+};
+
+const codeStyle: CSSProperties = {
+  padding: '0.75rem 1rem',
+  borderRadius: '0.75rem',
+  backgroundColor: '#1e293b',
   fontSize: '0.95rem',
 };
+
+const sectionStyle: CSSProperties = {
+  width: '100%',
+  maxWidth: 640,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '1rem',
+};
+
+const cardStyle: CSSProperties = {
+  backgroundColor: '#1e293b',
+  padding: '1.5rem',
+  borderRadius: '1rem',
+  textAlign: 'left',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.85rem',
+};
+
+const cardTitleStyle: CSSProperties = {
+  margin: 0,
+  fontSize: '1.1rem',
+};
+
+const paragraphStyle: CSSProperties = {
+  margin: 0,
+  lineHeight: 1.5,
+  color: '#cbd5f5',
+  fontSize: '0.95rem',
+};
+
+const hintStyle: CSSProperties = {
+  margin: 0,
+  lineHeight: 1.4,
+  color: '#94a3b8',
+  fontSize: '0.85rem',
+};
+
+const preStyle: CSSProperties = {
+  backgroundColor: '#0f172a',
+  borderRadius: '0.75rem',
+  padding: '0.9rem 1rem',
+  fontSize: '0.9rem',
+  whiteSpace: 'pre-wrap',
+};
+
+const statusListStyle: CSSProperties = {
+  listStyle: 'none',
+  padding: 0,
+  margin: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.75rem',
+};
+
+const statusItemStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.2rem',
+  backgroundColor: '#0f172a',
+  borderRadius: '0.75rem',
+  padding: '0.9rem 1rem',
+};
+
+const statusHeaderStyle: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '1rem',
+  fontSize: '0.95rem',
+};
+
+const envNameStyle: CSSProperties = {
+  color: '#94a3b8',
+  letterSpacing: '0.03em',
+  fontSize: '0.75rem',
+  textTransform: 'uppercase',
+};
+
+const endpointRowStyle: CSSProperties = {
+  display: 'flex',
+  gap: '0.5rem',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+};
+
+const endpointCodeStyle: CSSProperties = {
+  flex: '1 1 auto',
+  minWidth: 0,
+  overflowX: 'auto',
+  padding: '0.5rem 0.75rem',
+  borderRadius: '0.5rem',
+  backgroundColor: '#0f172a',
+};
+
+const pillStyle = (configured: boolean): CSSProperties => ({
+  border: `1px solid ${configured ? '#4ade80' : '#f87171'}`,
+  color: configured ? '#4ade80' : '#f87171',
+  padding: '0.12rem 0.75rem',
+  borderRadius: '999px',
+  fontSize: '0.8rem',
+  fontWeight: 600,
+});
+
+const copyButtonStyle = (enabled: boolean): CSSProperties => ({
+  border: '1px solid #38bdf8',
+  background: enabled ? '#0f172a' : '#1e293b',
+  color: enabled ? '#38bdf8' : '#94a3b8',
+  borderRadius: '999px',
+  padding: '0.4rem 0.9rem',
+  cursor: enabled ? 'pointer' : 'not-allowed',
+  transition: 'opacity 0.2s ease',
+});
+
+function buildCopyButtonScript(endpoint: string): string {
+  const safeEndpoint = JSON.stringify(endpoint);
+  return `
+    (() => {
+      const btn = document.getElementById('copy-endpoint-btn');
+      if (!btn) {
+        return;
+      }
+      const value = ${safeEndpoint};
+      if (!value || !navigator?.clipboard) {
+        btn.disabled = true;
+        btn.textContent = 'コピー不可';
+        return;
+      }
+      let timer = null;
+      const reset = () => {
+        if (timer) clearTimeout(timer);
+        btn.dataset.state = 'idle';
+        btn.textContent = 'コピー';
+      };
+      btn.addEventListener('click', async () => {
+        if (btn.dataset.state === 'pending') {
+          return;
+        }
+        btn.dataset.state = 'pending';
+        try {
+          await navigator.clipboard.writeText(value);
+          btn.textContent = 'コピー済み';
+        } catch (error) {
+          console.error('Failed to copy endpoint URL', error);
+          btn.textContent = 'コピー失敗';
+        } finally {
+          timer = setTimeout(reset, 2000);
+        }
+      });
+    })();
+  `;
+}

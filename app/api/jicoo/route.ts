@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'node:crypto';
-import { getRuntimeConfig } from '@/lib/runtime-config';
+import { getEnvConfig } from '@/lib/env';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,7 +10,6 @@ const SIGNATURE_TOLERANCE_SECONDS = 60 * 5;
 const FALLBACK_TEXT = '不明';
 const JST_TIMEZONE = 'Asia/Tokyo';
 const PHONE_QUESTION_PATTERN = /(電話|phone|tel)/i;
-const GOOGLE_MEET_QUESTION_PATTERN = /(google\s*meet|meet\s*url|google\s*hangout|オンライン.*URL|URL.*Google)/i;
 
 type JicooAnswerContent = string | string[] | null | undefined;
 
@@ -78,11 +77,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing signature header' }, { status: 400 });
   }
 
-  const { jicooSecret: webhookSecret, slackWebhookUrl } = await getRuntimeConfig();
+  const { jicooSecret: webhookSecret, slackWebhookUrl } = getEnvConfig();
   if (!webhookSecret || !slackWebhookUrl) {
-    console.error('Runtime config missing. Configure via UI before sending events.');
+    console.error('Missing SLACK_WEBHOOK_URL and/or JICOO_SIGNING_SECRET.');
     return NextResponse.json(
-      { error: 'Runtime config missing. Please configure from the dashboard UI.' },
+      { error: 'Environment variables missing. Please set SLACK_WEBHOOK_URL and JICOO_SIGNING_SECRET.' },
       { status: 503 },
     );
   }
@@ -182,7 +181,6 @@ function buildSlackPayload(payload: JicooEventPayload): SlackPayload {
   const { name, email, phone } = getContactInfo(payload, answers);
   const startText = toJstString(payload.object?.startedAt);
   const endText = toJstString(payload.object?.endedAt);
-  const googleMeetUrl = extractGoogleMeetUrl(payload, answers);
   const heading = '新しい予約を受信しました';
 
   const text =
@@ -191,8 +189,7 @@ function buildSlackPayload(payload: JicooEventPayload): SlackPayload {
     `・メール: ${email}\n` +
     `・電話番号: ${phone}\n` +
     `・開始時刻: ${startText}\n` +
-    `・終了時刻: ${endText}\n` +
-    `・Google Meet: ${googleMeetUrl}`;
+    `・終了時刻: ${endText}`;
 
   const blocks = [
     {
@@ -224,10 +221,6 @@ function buildSlackPayload(payload: JicooEventPayload): SlackPayload {
         {
           type: 'mrkdwn',
           text: `*終了時刻*\n${endText}`,
-        },
-        {
-          type: 'mrkdwn',
-          text: `*Google Meet*\n${googleMeetUrl}`,
         },
       ],
     },
@@ -307,35 +300,6 @@ function getContactInfo(payload: JicooEventPayload, answers: JicooAnswer[]) {
   return { name, email, phone };
 }
 
-function extractGoogleMeetUrl(payload: JicooEventPayload, answers: JicooAnswer[]): string {
-  const candidates = [
-    payload.object?.googleMeetUrl,
-    payload.object?.hangoutLink,
-    payload.object?.hangoutUrl,
-    payload.object?.conferenceUrl,
-    payload.object?.meetingUrl,
-    payload.object?.meeting?.url,
-    payload.object?.meeting?.link,
-    payload.object?.location?.url,
-    payload.object?.location?.link,
-    payload.object?.location?.value,
-  ];
-
-  for (const candidate of candidates) {
-    const normalized = normalizeText(candidate);
-    if (normalized && looksLikeUrl(normalized)) {
-      return normalized;
-    }
-  }
-
-  const answerUrl = findAnswerValue(answers, GOOGLE_MEET_QUESTION_PATTERN);
-  if (answerUrl && looksLikeUrl(answerUrl)) {
-    return answerUrl;
-  }
-
-  return FALLBACK_TEXT;
-}
-
 function findAnswerValue(answers: JicooAnswer[], pattern: RegExp): string | undefined {
   for (const answer of answers) {
     if (!answer.question || !pattern.test(answer.question)) {
@@ -368,13 +332,4 @@ function normalizeText(value?: string | null): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function looksLikeUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:';
-  } catch {
-    return false;
-  }
 }
